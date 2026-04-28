@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AML Transaction Monitoring Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; }
+  header { background: #fff; border-bottom: 1px solid #e5e5e2; padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 18px; font-weight: 500; }
+  header p  { font-size: 13px; color: #888; margin-top: 2px; }
+  .badge { font-size: 11px; padding: 3px 10px; border-radius: 4px; font-weight: 500; }
+  .badge-red  { background: #FCEBEB; color: #A32D2D; }
+  .badge-blue { background: #E6F1FB; color: #185FA5; }
+  .controls { padding: 1rem 2rem 0; display: flex; gap: 8px; }
+  .btn { font-size: 13px; padding: 7px 18px; border-radius: 6px; border: 1px solid #ddd; cursor: pointer; background: #fff; color: #444; transition: all .15s; }
+  .btn.active { background: #185FA5; color: #fff; border-color: #185FA5; }
+  .btn:hover:not(.active) { background: #f0f0ee; }
+  main { padding: 1.25rem 2rem 2rem; max-width: 1280px; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1.25rem; }
+  .kpi { background: #fff; border: 1px solid #e5e5e2; border-radius: 10px; padding: 1rem 1.25rem; }
+  .kpi label { font-size: 12px; color: #888; display: block; margin-bottom: 8px; }
+  .kpi .val   { font-size: 26px; font-weight: 500; line-height: 1; margin-bottom: 4px; }
+  .kpi .sub   { font-size: 12px; color: #aaa; }
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .card { background: #fff; border: 1px solid #e5e5e2; border-radius: 10px; padding: 1.25rem; }
+  .card h3 { font-size: 13px; color: #666; font-weight: 400; margin-bottom: 14px; }
+  .chart-wrap { position: relative; width: 100%; height: 210px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 0; font-weight: 500; color: #888; border-bottom: 1px solid #e5e5e2; font-size: 12px; }
+  td { padding: 9px 0; border-bottom: 1px solid #f0f0ee; color: #333; }
+  td.mono { font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 12px; }
+  .risk-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 500; display: inline-block; }
+  .risk-HIGH   { background: #FCEBEB; color: #A32D2D; }
+  .risk-MEDIUM { background: #FAEEDA; color: #854F0B; }
+  .risk-LOW    { background: #EAF3DE; color: #3B6D11; }
+  @media (max-width: 768px) {
+    .kpi-grid   { grid-template-columns: 1fr 1fr; }
+    .chart-grid { grid-template-columns: 1fr; }
+    main, .controls, header { padding-left: 1rem; padding-right: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>AML Transaction Monitoring</h1>
+    <p>Fraud detection &amp; risk segmentation — Kaggle datasets</p>
+  </div>
+  <div style="display:flex;gap:6px;align-items:center;">
+    <span class="badge badge-red">284,807 CC txns</span>
+    <span class="badge badge-blue">6.36M PaySim txns</span>
+  </div>
+</header>
+
+<div class="controls">
+  <button class="btn active" onclick="switchDs('cc')">Credit Card</button>
+  <button class="btn"        onclick="switchDs('ps')">PaySim</button>
+</div>
+
+<main>
+  <div class="kpi-grid" id="kpis"></div>
+  <div class="chart-grid">
+    <div class="card"><h3 id="c1t"></h3><div class="chart-wrap"><canvas id="c1" role="img" aria-label="Chart 1"></canvas></div></div>
+    <div class="card"><h3 id="c2t"></h3><div class="chart-wrap"><canvas id="c2" role="img" aria-label="Chart 2"></canvas></div></div>
+  </div>
+  <div class="chart-grid">
+    <div class="card"><h3 id="c3t"></h3><div class="chart-wrap"><canvas id="c3" role="img" aria-label="Chart 3"></canvas></div></div>
+    <div class="card"><h3 id="c4t"></h3><div class="chart-wrap"><canvas id="c4" role="img" aria-label="Chart 4"></canvas></div></div>
+  </div>
+  <div class="card" style="margin-top:0;">
+    <h3 id="tableTitle">Top flagged accounts — high risk</h3>
+    <table>
+      <thead id="tableHead"></thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const DS = {
+  cc: {
+    kpis: [
+      { label:'Total transactions', val:'284,807', sub:'credit card dataset', color:'' },
+      { label:'Confirmed fraud', val:'492', sub:'0.17% fraud rate', color:'#A32D2D' },
+      { label:'High spike alerts', val:'4,076', sub:'amount > 3σ', color:'#BA7517' },
+      { label:'Avg fraud amount', val:'$122', sub:'vs $88 normal', color:'#185FA5' },
+    ],
+    c1t:'Fraud rate by hour of day',
+    c2t:'Avg amount — fraud vs. normal',
+    c3t:'Risk tier distribution',
+    c4t:'Spike & fraud flag overlap',
+    charts: {
+      c1:{ type:'bar', labels:Array.from({length:24},(_,i)=>i+':00'),
+           datasets:[{ label:'Fraud rate %', data:[0.16,0.20,1.71,0.49,1.04,0.37,0.13,0.32,0.18,0.14,0.13,0.10,0.09,0.11,0.10,0.09,0.10,0.11,0.12,0.14,0.13,0.18,0.16,0.18],
+             backgroundColor:function(ctx){ const v=ctx.dataset.data[ctx.dataIndex]; return v>1?'#A32D2D':v>0.3?'#BA7517':'#185FA5'; }, borderWidth:0 }],
+           opts:{ y:{ ticks:{callback:v=>v+'%'} }, x:{ticks:{maxRotation:45,autoSkip:true}} }},
+      c2:{ type:'bar', labels:['Normal','Fraud'],
+           datasets:[{label:'Avg amount ($)', data:[88,122], backgroundColor:['#185FA5','#A32D2D'], borderWidth:0}],
+           opts:{ y:{ ticks:{callback:v=>'$'+v} } }},
+      c3:{ type:'doughnut', labels:['Low (98.4%)','Medium (1.4%)','High (0.17%)'],
+           datasets:[{data:[280250,4065,492], backgroundColor:['#185FA5','#BA7517','#A32D2D'], borderWidth:3, borderColor:'#fff'}] },
+      c4:{ type:'bar', labels:['Spike only','Fraud only','Both flagged'],
+           datasets:[{label:'Count', data:[4065,481,11], backgroundColor:['#BA7517','#A32D2D','#791F1F'], borderWidth:0}] },
+    },
+    tableHead: ['Account / Segment','Tx count','Volume','Fraud txns','Risk tier'],
+    tableRows: [
+      ['High-spike group',    '4,076','> $839 avg',   11,  'HIGH'],
+      ['Night window 2–4am',  '5,537','peak hours',   80,  'HIGH'],
+      ['Confirmed fraud set', '492',  '$122 avg',     492, 'HIGH'],
+      ['Medium-risk segment', '4,065','$250–840',     0,   'MEDIUM'],
+      ['Normal segment',      '280,250','$88 avg',    0,   'LOW'],
+    ],
+  },
+  ps: {
+    kpis: [
+      { label:'Total transactions', val:'6.36M', sub:'PaySim dataset', color:'' },
+      { label:'Confirmed fraud', val:'8,213', sub:'0.13% fraud rate', color:'#A32D2D' },
+      { label:'High-risk accounts', val:'8,299', sub:'top 0.13% by score', color:'#BA7517' },
+      { label:'System flag recall', val:'0.19%', sub:'of 8,213 fraud cases', color:'#185FA5' },
+    ],
+    c1t:'Fraud count by transaction type',
+    c2t:'Fraud rate by transaction type',
+    c3t:'Account risk tier distribution',
+    c4t:'System flag vs. actual fraud',
+    charts: {
+      c1:{ type:'bar', labels:['CASH_IN','CASH_OUT','DEBIT','PAYMENT','TRANSFER'],
+           datasets:[{label:'Fraud count', data:[0,4116,0,0,4097], backgroundColor:['#185FA5','#A32D2D','#185FA5','#185FA5','#BA7517'], borderWidth:0}] },
+      c2:{ type:'bar', labels:['CASH_IN','CASH_OUT','DEBIT','PAYMENT','TRANSFER'],
+           datasets:[{label:'Fraud rate %', data:[0,0.18,0,0,0.77], backgroundColor:['#3B6D11','#A32D2D','#3B6D11','#3B6D11','#BA7517'], borderWidth:0}],
+           opts:{ y:{ ticks:{callback:v=>v+'%'} } }},
+      c3:{ type:'doughnut', labels:['Low (98.4%)','Medium (1.39%)','High (0.13%)'],
+           datasets:[{data:[6256860,88148,8299], backgroundColor:['#185FA5','#BA7517','#A32D2D'], borderWidth:3, borderColor:'#fff'}] },
+      c4:{ type:'bar', labels:['Actually fraud','System flagged','Both (caught)'],
+           datasets:[{label:'Count', data:[8213,16,16], backgroundColor:['#A32D2D','#BA7517','#3B6D11'], borderWidth:0}] },
+    },
+    tableHead: ['Account ID','Tx count','Total volume','Fraud txns','Risk tier'],
+    tableRows: [
+      ['C1715283297', '1', '$92.4M',   0, 'HIGH'],
+      ['C2127282686', '1', '$73.8M',   0, 'HIGH'],
+      ['C2044643633', '1', '$71.2M',   0, 'HIGH'],
+      ['C1425667947', '1', '$69.9M',   0, 'HIGH'],
+      ['Fraud set (all)', '8,213', 'varies', 1, 'HIGH'],
+    ],
+  }
+};
+
+let charts = {};
+let active = 'cc';
+
+function renderKPIs(ds) {
+  document.getElementById('kpis').innerHTML = DS[ds].kpis.map(k => `
+    <div class="kpi">
+      <label>${k.label}</label>
+      <div class="val" style="color:${k.color||'#1a1a1a'}">${k.val}</div>
+      <div class="sub">${k.sub}</div>
+    </div>`).join('');
+}
+
+function renderTable(ds) {
+  const d = DS[ds];
+  document.getElementById('tableHead').innerHTML = '<tr>' + d.tableHead.map(h=>`<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById('tableBody').innerHTML = d.tableRows.map(r => `
+    <tr>
+      <td class="mono">${r[0]}</td>
+      <td>${r[1]}</td>
+      <td>${r[2]}</td>
+      <td style="color:${r[3]>0?'#A32D2D':'#aaa'};font-weight:${r[3]>0?500:400}">${r[3]===1?'yes':r[3]===0?'—':r[3]}</td>
+      <td><span class="risk-badge risk-${r[4]}">${r[4]}</span></td>
+    </tr>`).join('');
+}
+
+function buildChartOpts(base) {
+  const yOpts = base?.opts?.y || {};
+  const xOpts = base?.opts?.x || {};
+  return {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: base.type==='doughnut', position:'bottom', labels:{font:{size:11},padding:12} } },
+    scales: base.type==='doughnut' ? {} : {
+      y: { ticks: { font:{size:11}, ...(yOpts.ticks||{}) }, grid:{color:'#f0f0ee'}, ...yOpts },
+      x: { ticks: { font:{size:11}, ...(xOpts.ticks||{}) }, grid:{display:false}, ...xOpts }
+    }
+  };
+}
+
+function renderCharts(ds) {
+  Object.values(charts).forEach(c => { try { c.destroy(); } catch(e){} });
+  charts = {};
+  const d = DS[ds];
+  document.getElementById('c1t').textContent = d.c1t;
+  document.getElementById('c2t').textContent = d.c2t;
+  document.getElementById('c3t').textContent = d.c3t;
+  document.getElementById('c4t').textContent = d.c4t;
+  ['c1','c2','c3','c4'].forEach(id => {
+    const cfg = d.charts[id];
+    const datasets = cfg.datasets.map(ds => {
+      if (typeof ds.backgroundColor === 'function') {
+        return { ...ds };
+      }
+      return { ...ds };
+    });
+    charts[id] = new Chart(document.getElementById(id), {
+      type: cfg.type,
+      data: { labels: cfg.labels, datasets },
+      options: buildChartOpts(cfg)
+    });
+  });
+}
+
+function switchDs(ds) {
+  active = ds;
+  document.querySelectorAll('.btn').forEach((b,i) => b.classList.toggle('active', (ds==='cc'&&i===0)||(ds==='ps'&&i===1)));
+  renderKPIs(ds);
+  renderTable(ds);
+  renderCharts(ds);
+}
+
+switchDs('cc');
+</script>
+</body>
+</html>
